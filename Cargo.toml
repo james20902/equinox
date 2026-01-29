@@ -7,6 +7,8 @@ edition = "2021"
 
 [dependencies]
 slint = "1.12.1"
+maud = "*"
+rfd = "0.17.2"
 
 [build-dependencies]
 slint-build = "1.12.1"

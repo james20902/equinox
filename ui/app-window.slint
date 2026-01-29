@@ -1,19 +1,44 @@
-import { Button, VerticalBox, HorizontalBox, TextEdit, LineEdit } from "std-widgets.slint";
+import {
+    Button,
+    VerticalBox,
+    HorizontalBox,
+    TextEdit,
+    LineEdit,
+} from "std-widgets.slint";
 
 export component AppWindow inherits Window {
     title: "Equinox";
 
     out property <string> blog_title;
     out property <string> blog_content;
+    in-out property <string> selected_project;
+    in-out property <bool> show_create_index_prompt: false;
+    in-out property <bool> show_selected_project: false;
 
     callback generate_page();
+    callback parse_directory();
+    callback create_index_file();
+    callback cancel_create_index();
     VerticalBox {
+        Button {
+            text: "Pick file";
+            clicked => {
+                root.parse_directory();
+            }
+        }
+
+        Text {
+            text: "Selected Project: " + selected_project;
+            visible: show_selected_project;
+        }
+
         HorizontalBox {
             Text {
                 font-size: 18px;
                 font-weight: 600;
                 text: "Title";
             }
+
             LineEdit {
                 font-size: 18px;
                 width: 700px;
@@ -23,12 +48,14 @@ export component AppWindow inherits Window {
                 };
             }
         }
+
         HorizontalBox {
             Text {
                 font-size: 18px;
                 font-weight: 600;
                 text: "Content";
             }
+
             TextEdit {
                 font-size: 14px;
                 width: 700px;
@@ -38,6 +65,7 @@ export component AppWindow inherits Window {
                 }
             }
         }
+
         Button {
             text: "Generate";
             clicked => {
@@ -45,7 +73,53 @@ export component AppWindow inherits Window {
             }
         }
     }
-    
+
+    // Prompt dialog for missing index.html
+    if show_create_index_prompt: Rectangle {
+        background: #00000080;
+
+        Rectangle {
+            width: 400px;
+            height: 150px;
+            background: black;
+            border-radius: 8px;
+
+            VerticalBox {
+                padding: 20px;
+
+                Text {
+                    text: "No index.html found in this directory.";
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: "Would you like to create one?";
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                }
+
+                HorizontalBox {
+                    alignment: center;
+                    spacing: 10px;
+
+                    Button {
+                        text: "Create";
+                        clicked => {
+                            root.create_index_file();
+                        }
+                    }
+
+                    Button {
+                        text: "Cancel";
+                        clicked => {
+                            root.cancel_create_index();
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 import { StandardButton, Button } from "std-widgets.slint";
@@ -53,9 +127,10 @@ export component ErrorWindow inherits Dialog {
     in property <string> error_window_content;
 
     Text {
-      text: error_window_content;
+        text: error_window_content;
     }
-    StandardButton { 
+
+    StandardButton {
         kind: ok;
     }
 }
