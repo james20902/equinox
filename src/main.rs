@@ -8,6 +8,7 @@ use rfd::FileDialog;
 use slint::{ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
 use std::{
+    collections::HashMap,
     error::Error,
     fmt, fs,
     path::{Path, PathBuf},
@@ -206,21 +207,29 @@ fn load_template(template_path: &Path) -> Result<RcDom, String> {
     Ok(dom)
 }
 
-fn replace_placeholders(handle: &Handle, title: &str, content: &str) {
+fn replace_placeholders(handle: &Handle, target_tags: &HashMap<&str, &str>) {
     let node = handle;
 
     if let NodeData::Text { contents } = &node.data {
         let text = contents.borrow().to_string();
-        if text.contains("{{title}}") || text.contains("{{content}}") {
-            let new_text = text
-                .replace("{{title}}", title)
-                .replace("{{content}}", content);
+        let mut new_text = text.clone();
+        let mut changed = false;
+
+        for (key, value) in target_tags {
+            let placeholder = format!("{{/{}/}}", key);
+            if new_text.contains(&placeholder) {
+                new_text = new_text.replace(&placeholder, value);
+                changed = true;
+            }
+        }
+
+        if changed {
             *contents.borrow_mut() = new_text.into();
         }
     }
 
     for child in node.children.borrow().iter() {
-        replace_placeholders(child, title, content);
+        replace_placeholders(child, target_tags);
     }
 }
 
@@ -236,7 +245,8 @@ fn serialize_dom(dom: &RcDom) -> Result<String, String> {
 
 fn blog_to_html(template_path: &Path, title: String, content: String) -> Result<String, String> {
     let dom = load_template(template_path)?;
-    replace_placeholders(&dom.document, &title, &content);
+    let target_tags = HashMap::from([("title", title.as_str()), ("content", content.as_str())]);
+    replace_placeholders(&dom.document, &target_tags);
     let html_output = serialize_dom(&dom)?;
     println!("{}", html_output);
     Ok(html_output)
