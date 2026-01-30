@@ -3,6 +3,7 @@
 
 use maud::{html, DOCTYPE};
 use rfd::FileDialog;
+use slint::{ModelRc, SharedString, VecModel};
 use std::{
     error::Error,
     fmt, fs,
@@ -104,9 +105,18 @@ fn main() -> Result<(), Box<dyn Error>> {
                             .map(|s| s.to_string())
                             .unwrap_or_else(|| structure.root_path.display().to_string());
 
+                        // Convert categories to Slint model
+                        let categories: Vec<SharedString> = structure
+                            .categories
+                            .iter()
+                            .map(|s| SharedString::from(s.as_str()))
+                            .collect();
+                        let categories_model = ModelRc::new(VecModel::from(categories));
+
                         if let Some(ui) = ui_handle.upgrade() {
                             ui.set_selected_project(project_name.into());
                             ui.set_show_selected_project(true);
+                            ui.set_categories(categories_model);
                         }
 
                         // Check if index.html is missing and prompt to create
@@ -153,6 +163,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         }
+    });
+
+    ui.on_create_category(|| {
+        // TODO: pop up textbox to create category
+        println!("Create category clicked");
     });
 
     ui.run()?;
