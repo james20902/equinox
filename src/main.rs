@@ -1,9 +1,12 @@
 // Prevent console window in addition to Slint window in Windows release builds when, e.g., starting the app via file manager. Ignored on other platforms.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use maud::{html, DOCTYPE};
+use html5ever::tendril::TendrilSink;
+use html5ever::{parse_document, serialize};
+use markup5ever_rcdom::{Handle, NodeData, RcDom, SerializableHandle};
 use rfd::FileDialog;
 use slint::{ModelRc, SharedString, VecModel};
+use std::cell::RefCell;
 use std::{
     error::Error,
     fmt, fs,
@@ -88,8 +91,13 @@ fn parse_site_structure(path: &Path) -> Result<SiteStructure, String> {
 fn main() -> Result<(), Box<dyn Error>> {
     let ui = AppWindow::new()?;
 
+    // Shared state to store the current project root path
+    let current_project_root: std::rc::Rc<RefCell<Option<PathBuf>>> =
+        std::rc::Rc::new(RefCell::new(None));
+
     ui.on_parse_directory({
         let ui_handle = ui.as_weak();
+        let project_root = current_project_root.clone();
         move || {
             let dialog = FileDialog::new().set_title("Select a directory");
 
@@ -97,6 +105,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 match parse_site_structure(&path) {
                     Ok(structure) => {
                         println!("{}", structure);
+
+                        // Store the project root path
+                        *project_root.borrow_mut() = Some(structure.root_path.clone());
 
                         let project_name = structure
                             .root_path
@@ -153,13 +164,21 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     ui.on_generate_page({
         let ui_handle = ui.as_weak();
+        let project_root = current_project_root.clone();
         move || {
             if let Some(ui) = ui_handle.upgrade() {
                 let title = ui.get_blog_title().to_string();
                 let content = ui.get_blog_content().to_string();
-                match blog_to_html(title, content) {
-                    Ok(result) => println!("Generated: {}", result),
-                    Err(e) => eprintln!("Error: {}", e),
+
+                let root = project_root.borrow();
+                if let Some(ref root_path) = *root {
+                    let template_path = root_path.join("default.html");
+                    match blog_to_html(&template_path, title, content) {
+                        Ok(result) => println!("Generated HTML ({} bytes)", result.len()),
+                        Err(e) => eprintln!("Error: {}", e),
+                    }
+                } else {
+                    eprintln!("Error: No project selected");
                 }
             }
         }
@@ -175,20 +194,50 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn blog_to_html(title: String, content: String) -> Result<String, String> {
-    let htmldoc = html! {
-        (DOCTYPE)
-        html lang="en" {
-            head {
-                meta charset="UTF-8";
-                title { (format!("jjp | {}", title)) }
-            }
-            body {
-                h1 { (title) }
-                div { (content) }
-            }
+fn load_template(template_path: &Path) -> Result<RcDom, String> {
+    let html_content =
+        fs::read_to_string(template_path).map_err(|e| format!("Failed to read template: {}", e))?;
+
+    let dom = parse_document(RcDom::default(), Default::default())
+        .from_utf8()
+        .read_from(&mut html_content.as_bytes())
+        .map_err(|e| format!("Failed to parse template: {}", e))?;
+
+    Ok(dom)
+}
+
+fn replace_placeholders(handle: &Handle, title: &str, content: &str) {
+    let node = handle;
+
+    if let NodeData::Text { contents } = &node.data {
+        let text = contents.borrow().to_string();
+        if text.contains("{{title}}") || text.contains("{{content}}") {
+            let new_text = text
+                .replace("{{title}}", title)
+                .replace("{{content}}", content);
+            *contents.borrow_mut() = new_text.into();
         }
-    };
-    println!("{}", htmldoc.into_string());
-    Ok("Generated HTML".to_string())
+    }
+
+    for child in node.children.borrow().iter() {
+        replace_placeholders(child, title, content);
+    }
+}
+
+fn serialize_dom(dom: &RcDom) -> Result<String, String> {
+    let document: SerializableHandle = dom.document.clone().into();
+    let mut bytes = Vec::new();
+
+    serialize(&mut bytes, &document, Default::default())
+        .map_err(|e| format!("Failed to serialize HTML: {}", e))?;
+
+    String::from_utf8(bytes).map_err(|e| format!("Failed to convert to UTF-8: {}", e))
+}
+
+fn blog_to_html(template_path: &Path, title: String, content: String) -> Result<String, String> {
+    let dom = load_template(template_path)?;
+    replace_placeholders(&dom.document, &title, &content);
+    let html_output = serialize_dom(&dom)?;
+    println!("{}", html_output);
+    Ok(html_output)
 }
