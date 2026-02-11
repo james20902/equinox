@@ -1,6 +1,8 @@
 // Prevent console window in addition to Slint window in Windows release builds when, e.g., starting the app via file manager. Ignored on other platforms.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use chrono::Utc;
+use chrono_tz::America::New_York;
 use html5ever::tendril::TendrilSink;
 use html5ever::{parse_document, serialize};
 use markup5ever_rcdom::{Handle, NodeData, RcDom, SerializableHandle};
@@ -92,13 +94,13 @@ fn parse_site_structure(path: &Path) -> Result<SiteStructure, String> {
 fn main() -> Result<(), Box<dyn Error>> {
     let ui = AppWindow::new()?;
 
-    // Shared state to store the current project root path
-    let current_project_root: std::rc::Rc<RefCell<Option<PathBuf>>> =
+    // Shared state to store the current site structure
+    let current_site_structure: std::rc::Rc<RefCell<Option<SiteStructure>>> =
         std::rc::Rc::new(RefCell::new(None));
 
     ui.on_parse_directory({
         let ui_handle = ui.as_weak();
-        let project_root = current_project_root.clone();
+        let site_structure = current_site_structure.clone();
         move || {
             let dialog = FileDialog::new().set_title("Select a directory");
 
@@ -107,8 +109,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     Ok(structure) => {
                         println!("{}", structure);
 
-                        // Store the project root path
-                        *project_root.borrow_mut() = Some(structure.root_path.clone());
+                        // Store the site structure
+                        *site_structure.borrow_mut() = Some(structure.clone());
 
                         let project_name = structure
                             .root_path
@@ -165,16 +167,16 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     ui.on_generate_page({
         let ui_handle = ui.as_weak();
-        let project_root = current_project_root.clone();
+        let site_structure = current_site_structure.clone();
         move || {
             if let Some(ui) = ui_handle.upgrade() {
                 let title = ui.get_blog_title().to_string();
                 let content = ui.get_blog_content().to_string();
 
-                let root = project_root.borrow();
-                if let Some(ref root_path) = *root {
-                    let template_path = root_path.join("default.html");
-                    match blog_to_html(&template_path, title, content) {
+                let structure = site_structure.borrow();
+                if let Some(ref site) = *structure {
+                    let template_path = site.root_path.join("default.html");
+                    match blog_to_html(&template_path, title, content, &site.categories) {
                         Ok(result) => println!("Generated HTML ({} bytes)", result.len()),
                         Err(e) => eprintln!("Error: {}", e),
                     }
@@ -243,9 +245,38 @@ fn serialize_dom(dom: &RcDom) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|e| format!("Failed to convert to UTF-8: {}", e))
 }
 
-fn blog_to_html(template_path: &Path, title: String, content: String) -> Result<String, String> {
+fn generate_navbar_html(categories: &[String]) -> String {
+    let mut html = String::from(
+        r#"<li class="navbar-item"><a class="navbar-link" href="index.html">Home</a></li>"#,
+    );
+    for category in categories {
+        let href = format!("{}.html", category.to_lowercase());
+        html.push_str(&format!(
+            r#"<li class="navbar-item"><a class="navbar-link" href="{}">{}</a></li>"#,
+            href, category
+        ));
+    }
+    html
+}
+
+fn blog_to_html(
+    template_path: &Path,
+    title: String,
+    content: String,
+    categories: &[String],
+) -> Result<String, String> {
     let dom = load_template(template_path)?;
-    let target_tags = HashMap::from([("title", title.as_str()), ("content", content.as_str())]);
+    let date = Utc::now()
+        .with_timezone(&New_York)
+        .format("%B %d, %Y")
+        .to_string();
+    let navbar_html = generate_navbar_html(categories);
+    let target_tags = HashMap::from([
+        ("title", title.as_str()),
+        ("content", content.as_str()),
+        ("date", date.as_str()),
+        ("navbar-items", navbar_html.as_str()),
+    ]);
     replace_placeholders(&dom.document, &target_tags);
     let html_output = serialize_dom(&dom)?;
     println!("{}", html_output);
